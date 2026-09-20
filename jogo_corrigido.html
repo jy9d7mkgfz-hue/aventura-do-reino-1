@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#1b1026">
+<title>Aventura do Reino</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#160d20;font-family:Arial,sans-serif;touch-action:none}
+body{display:flex;align-items:center;justify-content:center}
+#wrap{width:100%;max-width:980px;padding:6px;position:relative}
+canvas{display:block;width:100%;height:auto;aspect-ratio:16/9;background:#78c9ff;border:2px solid #fff;border-radius:12px;box-shadow:0 4px 20px #0008;touch-action:none}
+#hud{position:absolute;left:14px;top:14px;right:14px;display:flex;justify-content:space-between;gap:6px;flex-wrap:wrap;color:#fff;font-weight:bold;font-size:clamp(11px,2.5vw,17px);text-shadow:2px 2px 2px #000;pointer-events:none}
+#msg{position:absolute;inset:0;display:none;align-items:center;justify-content:center;text-align:center;color:#fff;font-weight:bold;font-size:clamp(20px,6vw,42px);text-shadow:3px 3px #000;background:#0005;border-radius:12px;pointer-events:none;padding:20px}
+#controls{display:flex;justify-content:center;gap:14px;padding:7px 0 calc(5px + env(safe-area-inset-bottom))}
+button{width:74px;height:58px;border:2px solid #fff;border-radius:18px;background:#70449a;color:#fff;font-size:28px;font-weight:bold;box-shadow:0 3px 8px #0008;touch-action:none;user-select:none}
+button:active{transform:scale(.94);background:#a862c9}
+#hint{text-align:center;color:#ddd;font-size:12px;padding-bottom:4px}
+@media(min-width:700px){#controls{display:none}#hint{font-size:13px}}
+</style>
+</head>
+<body>
+<div id="wrap">
+<canvas id="game" width="960" height="540"></canvas>
+<div id="hud">
+<span>🌸 Fase: <b id="lv">1</b>/20</span>
+<span>🪙 <b id="coins">0</b></span>
+<span>❤️ <b id="lives">6</b></span>
+<span>⭐ <b id="score">0</b></span>
+</div>
+<div id="msg"></div>
+<div id="controls">
+<button id="left" aria-label="Esquerda">◀</button>
+<button id="jump" aria-label="Pular">⬆</button>
+<button id="right" aria-label="Direita">▶</button>
+</div>
+<div id="hint">Celular: use os botões • PC: ← → e Espaço • R reinicia</div>
+</div>
+<script>
+(function(){
+"use strict";
+const c=document.getElementById("game"),ctx=c.getContext("2d");
+const W=960,H=540;
+const lvEl=document.getElementById("lv"),coinEl=document.getElementById("coins"),
+lifeEl=document.getElementById("lives"),scoreEl=document.getElementById("score"),msg=document.getElementById("msg");
+const keys={left:false,right:false,jump:false};
+let level=1,lives=6,coins=0,score=0,won=false,gameOver=false;
+let player,platforms,items,enemies,goal,camera=0,last=0;
+
+const names=["Pradaria Encantada","Floresta Roxa","Montanhas de Cristal","Castelo Sombrio","Palácio das Estrelas","Vale das Flores","Cavernas de Cristal","Ilha Tropical","Deserto Dourado","Cidade Neon","Floresta de Cogumelos","Lago Encantado","Montanha de Lava","Torre das Nuvens","Jardim Noturno","Ruínas Antigas","Reino de Gelo","Céu Arco-Íris","Castelo Final","Reino das Estrelas"];
+const themes=[
+["#79d6ff","#6dbd55"],["#7b55a8","#3f7046"],["#8fd8ff","#7895b5"],["#4b365f","#35213e"],["#8c79e8","#5544a2"],
+["#8ee9bd","#58b66a"],["#6b79a5","#3d456e"],["#5fd9ee","#37a86b"],["#ffd16a","#c98b35"],["#20204f","#33337c"],
+["#a9e8b7","#6c9f61"],["#8ad7e9","#4e9ab0"],["#f28a58","#7c3c35"],["#b9e9ff","#8ca8d0"],["#5c4a76","#29203d"],
+["#b59c7d","#665340"],["#d9f4ff","#8db6d0"],["#ffb4dc","#8f78cf"],["#44314f","#261b30"],["#1d1644","#4e3a9e"]
+];
+
+function rect(x,y,w,h){return{x,y,w,h}}
+function loadLevel(n){
+ level=n; camera=0; won=false; gameOver=false;
+ player={x:50,y:380,w:38,h:58,vx:0,vy:0,on:false,inv:0};
+ platforms=[rect(0,470,1100,70)];
+ let x=260;
+ for(let i=0;i<10;i++){
+   const y=360-(i%3)*65;
+   platforms.push(rect(x,y,125,22));
+   x+=155;
+ }
+ platforms.push(rect(1800,410,180,22),rect(2050,350,170,22),rect(2300,430,250,22));
+ goal={x:2460,y:330,w:28,h:100};
+ items=[];
+ for(let i=0;i<14;i++){
+   items.push({x:150+i*165,y:300+(i%3)*35,r:10,got:false});
+ }
+ enemies=[];
+ for(let i=0;i<7;i++){
+   enemies.push({x:420+i*270,y:430,w:34,h:34,vx:(i%2?1:-1)*.8,alive:true,min:360+i*270,max:620+i*270});
+ }
+ updateHud();
+ hideMsg();
+}
+function updateHud(){lvEl.textContent=level;coinEl.textContent=coins;lifeEl.textContent=lives;scoreEl.textContent=score}
+function showMsg(t){msg.innerHTML=t;msg.style.display="flex"}
+function hideMsg(){msg.style.display="none"}
+
+function key(e,on){
+ const k=e.key.toLowerCase();
+ if(k==="arrowleft"||k==="a")keys.left=on;
+ if(k==="arrowright"||k==="d")keys.right=on;
+ if(k===" "||k==="arrowup"||k==="w")keys.jump=on;
+ if(on&&k==="r"){lives=6;coins=0;score=0;loadLevel(1)}
+}
+addEventListener("keydown",e=>{key(e,true); if([" ","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.key))e.preventDefault()});
+addEventListener("keyup",e=>key(e,false));
+
+function bind(id,prop){
+ const b=document.getElementById(id);
+ const down=e=>{e.preventDefault();keys[prop]=true};
+ const up=e=>{e.preventDefault();keys[prop]=false};
+ ["pointerdown","touchstart"].forEach(t=>b.addEventListener(t,down,{passive:false}));
+ ["pointerup","pointercancel","pointerleave","touchend"].forEach(t=>b.addEventListener(t,up,{passive:false}));
+}
+bind("left","left");bind("right","right");bind("jump","jump");
+
+function hit(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y}
+function loseLife(){
+ if(player.inv>0)return;
+ lives--; updateHud();
+ if(lives<=0){gameOver=true;showMsg("💔 Fim de jogo<br><small>Toque em ⬆ ou pressione R para recomeçar</small>");}
+ else {player.x=50;player.y=350;player.vx=0;player.vy=0;player.inv=90;}
+}
+function next(){
+ if(level>=20){won=true;showMsg("🏆 Você venceu as 20 fases!<br><small>Pressione R para jogar novamente</small>");return}
+ loadLevel(level+1);showMsg("✨ Fase "+level+"<br><small>"+names[level-1]+"</small>");
+ setTimeout(()=>{if(!won&&!gameOver)hideMsg()},900);
+}
+function update(dt){
+ if(gameOver||won)return;
+ const s=dt/16.67;
+ if(player.inv>0)player.inv-=s;
+ player.vx=(keys.left?-4.3:0)+(keys.right?4.3:0);
+ if(keys.jump&&player.on){player.vy=-11;player.on=false;keys.jump=false}
+ player.vy+=.55*s;
+ player.x+=player.vx*s;
+ player.y+=player.vy*s;
+ player.on=false;
+ for(const p of platforms){
+   if(player.x+player.w>p.x&&player.x<p.x+p.w&&player.y+player.h>=p.y&&player.y+player.h<=p.y+24&&player.vy>=0){
+     player.y=p.y-player.h;player.vy=0;player.on=true;
+   }
+ }
+ if(player.x<0)player.x=0;
+ if(player.y>H+80)loseLife();
+ for(const it of items)if(!it.got&&Math.hypot(player.x+19-it.x,player.y+28-it.y)<28){it.got=true;coins++;score+=100;updateHud()}
+ for(const e of enemies)if(e.alive){
+   e.x+=e.vx*s;if(e.x<e.min||e.x>e.max)e.vx*=-1;
+   if(hit(player,e)){
+     if(player.vy>2&&player.y+player.h<e.y+18){e.alive=false;player.vy=-7;score+=250;updateHud()}
+     else loseLife();
+   }
+ }
+ if(hit(player,goal))next();
+ camera=Math.max(0,Math.min(1600,player.x-260));
+}
+
+function draw(){
+ const [sky,ground]=themes[level-1];
+ ctx.clearRect(0,0,W,H);
+ ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+ // decorative sky
+ ctx.globalAlpha=.25;
+ for(let i=0;i<8;i++){ctx.fillStyle="#fff";ctx.beginPath();ctx.arc((i*170-(camera*.15)%170),80+(i%3)*35,22,0,Math.PI*2);ctx.fill()}
+ ctx.globalAlpha=1;
+ ctx.save();ctx.translate(-camera,0);
+ ctx.fillStyle=ground;ctx.fillRect(0,470,2600,70);
+ for(const p of platforms){ctx.fillStyle="#7a4b35";ctx.fillRect(p.x,p.y,p.w,p.h);ctx.fillStyle="#55a83e";ctx.fillRect(p.x,p.y,p.w,6)}
+ for(const it of items)if(!it.got){ctx.fillStyle="#ffd83d";ctx.beginPath();ctx.arc(it.x,it.y,it.r,0,Math.PI*2);ctx.fill();ctx.strokeStyle="#a66b00";ctx.stroke()}
+ for(const e of enemies)if(e.alive){
+   ctx.fillStyle="#632b7a";ctx.fillRect(e.x,e.y,e.w,e.h);
+   ctx.fillStyle="#fff";ctx.fillRect(e.x+7,e.y+8,7,7);ctx.fillRect(e.x+21,e.y+8,7,7);
+   ctx.fillStyle="#111";ctx.fillRect(e.x+9,e.y+10,3,3);ctx.fillRect(e.x+23,e.y+10,3,3);
+ }
+ // goal
+ ctx.fillStyle="#eee";ctx.fillRect(goal.x,goal.y,5,100);ctx.fillStyle="#ff6ab5";
+ ctx.beginPath();ctx.moveTo(goal.x+5,goal.y);ctx.lineTo(goal.x+65,goal.y+18);ctx.lineTo(goal.x+5,goal.y+36);ctx.closePath();ctx.fill();
+
+ // original chibi/skateboard character
+ if(!(player.inv>0&&Math.floor(player.inv/5)%2===0)){
+   const x=player.x,y=player.y;
+   ctx.save();ctx.translate(x+19,y+26);
+   // skateboard
+   ctx.fillStyle="#27202e";ctx.fillRect(-27,28,54,6);
+   ctx.fillStyle="#222";ctx.beginPath();ctx.arc(-18,35,5,0,Math.PI*2);ctx.arc(18,35,5,0,Math.PI*2);ctx.fill();
+   // legs
+   ctx.strokeStyle="#222";ctx.lineWidth=7;ctx.beginPath();ctx.moveTo(-7,15);ctx.lineTo(-11,27);ctx.moveTo(7,15);ctx.lineTo(11,27);ctx.stroke();
+   // dress
+   ctx.fillStyle="#3a234d";ctx.beginPath();ctx.moveTo(-15,-1);ctx.lineTo(15,-1);ctx.lineTo(22,20);ctx.lineTo(-22,20);ctx.closePath();ctx.fill();
+   // arms
+   ctx.strokeStyle="#f6c7a7";ctx.lineWidth=6;ctx.beginPath();ctx.moveTo(-13,1);ctx.lineTo(-25,10);ctx.moveTo(13,1);ctx.lineTo(25,7);ctx.stroke();
+   // head
+   ctx.fillStyle="#f6c7a7";ctx.beginPath();ctx.arc(0,-19,16,0,Math.PI*2);ctx.fill();
+   // hair
+   ctx.fillStyle="#f2d36b";ctx.beginPath();ctx.arc(0,-24,19,Math.PI,Math.PI*2);ctx.lineTo(20,-6);ctx.lineTo(10,0);ctx.lineTo(5,-10);ctx.lineTo(-5,-8);ctx.lineTo(-13,0);ctx.lineTo(-20,-6);ctx.closePath();ctx.fill();
+   // eyes
+   ctx.fillStyle="#7445a5";ctx.beginPath();ctx.arc(-6,-19,2.8,0,Math.PI*2);ctx.arc(6,-19,2.8,0,Math.PI*2);ctx.fill();
+   // bow
+   ctx.fillStyle="#c24a9e";ctx.beginPath();ctx.moveTo(-2,-37);ctx.lineTo(-12,-42);ctx.lineTo(-10,-32);ctx.closePath();ctx.moveTo(2,-37);ctx.lineTo(12,-42);ctx.lineTo(10,-32);ctx.closePath();ctx.fill();
+   ctx.restore();
+ }
+ ctx.restore();
+ // level title
+ ctx.fillStyle="#fff";ctx.font="bold 18px Arial";ctx.textAlign="center";ctx.shadowColor="#000";ctx.shadowBlur=4;
+ ctx.fillText(names[level-1],W/2,32);ctx.shadowBlur=0;
+}
+
+function loop(t){const dt=Math.min(34,t-last||16);last=t;update(dt);draw();requestAnimationFrame(loop)}
+loadLevel(1);
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
